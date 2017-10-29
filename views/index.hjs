@@ -4,34 +4,287 @@
 	<head>
 		<title>{{ title }}</title>
 		<link rel='stylesheet' href='/stylesheets/style.css' />
+		<style>
+			.crow { display: flex; align-items: center; margin: 3px 0; }
+			.clabel { width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 8px; }
+			.ctrack { position: relative; flex: 1; height: 14px; background: #f2f2f2; border-radius: 2px; }
+			.ctrack-axis { background: none; height: 16px; }
+			.ctrack-axis span { position: absolute; transform: translateX(-50%); font-size: 11px; color: #666; }
+			.ctrack-axis span:first-child { transform: none; }
+			.ctrack-axis span:last-child { transform: translateX(-100%); }
+			.ctrack-stack { display: flex; background: #eee; }
+			.seg { display: block; height: 14px; }
+			.cbar { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
+			.ctick { position: absolute; top: 0; bottom: 0; width: 2px; background: #222; }
+			.cnote { width: 300px; padding-left: 8px; white-space: nowrap; font-size: 12px; color: #444; }
+		</style>
 	</head>
 	<body>
-		<form method='post' action='/' enctype="multipart/form-data">
-			<input type='file' name='data'>
+		<h1 style="font-size:22px;margin:12px 0 4px">Assembly machine log</h1>
+		<p style="max-width:90vw">This page reads one log file from the machine that attaches lenses to optical engines. An optical engine is a small circuit board with a laser. The page shows whether the parts passed, where the machine waited, and where the failures were.</p>
+		<h3>The short version</h3>
+		<ul id="summaryDiv" style="max-width:90vw;font-size:15px"></ul>
+		<div id="fingerprintDiv" style="max-width:90vw"></div>
+		<div id="checksDiv" style="max-width:90vw;font-size:14px"></div>
+		<div id="traceDiv" style="max-width:90vw;font-size:14px"></div>
+		<div id="scenariosDiv" style="max-width:90vw;font-size:14px"></div>
+		<p style="font-size:small">Upload the log file. Optionally, add the part names file in the same upload. {{ partsText }}.</p>
+		<form id="logForm" method='post' action='/' enctype="multipart/form-data">
+			<label>Log file <input type='file' name='data'></label>
+			<label>Part names file (optional) <input type='file' name='mapping'></label>
 			<input type='submit' value='Upload'>
 		</form>
-		<div id="graphdiv" style="width:90vw; height:70vh;"></div>
-		<div id="labelsDiv"style="width:90vw;font-size:small"></div>
-		<script type="text/javascript">
+		<button type="button" id="removeNames" style="font-size:small">Remove part names</button>
+		<div id="mappingStatus" style="font-size:small"></div>
+		<h3 style="text-align:center">Failed checks and passed area checks over time</h3>
+			<div id="failChartDiv" style="width:90vw;height:30vh;"></div>
+			<div style="width:90vw;font-size:small">Red: the machine waited with no results. Amber: one part failed at least twice in a row with no score. Green line: failed checks. Blue line: passed area checks.</div>
+			<div id="binsDiv" style="width:90vw;font-size:small"></div>
+			<div id="failStripDiv" style="width:90vw;font-size:small"></div>
+			<h3 style="text-align:center">Area checks against the reference (gold) area</h3>
+			<div id="devChartDiv" style="width:90vw;height:25vh;"></div>
+			<div style="width:90vw;font-size:small">Each dot is one area check. Zero means the part matches the reference area exactly. The pass or fail mark comes from the machine, not from this distance.</div>
+			<h3 style="text-align:center">Scores by assembly site and side</h3>
+		<div style="width:90vw;font-size:small">Each chart is one assembly site. Each line is one side. The grey band is the normal range, from the first 10 readings.</div>
+		<div id="chartsDiv" style="width:90vw;"></div>
+		<div style="width:90vw;font-size:small">Grey band: normal range. The average of the first 10 readings, plus or minus three standard deviations (a measure of spread).</div>
+		<h3 style="text-align:center">Where the log goes</h3>
+		<div id="flowDiv" style="width:90vw;font-size:small"></div>
+		<h3 style="text-align:center">Details by part, camera and site</h3>
+		<div id="statsDiv" style="width:90vw;font-size:small"></div>
+		<div id="camerasDiv" style="width:90vw;font-size:small"></div>
+		<div id="controlDiv" style="width:90vw;font-size:small"></div>
+		<div id="sitesDiv" style="width:90vw;font-size:small"></div>
+			<div id="stopsDiv" style="width:90vw;font-size:small"></div>
+			<div id="reportDiv" style="width:90vw;font-size:small"></div>
+			<h3 style="text-align:center">Pass and fail by part over time (each cell is 5 minutes)</h3>
+			<div id="heatDiv" style="width:90vw;font-size:small;overflow-x:auto"></div>
+			<div style="width:90vw;font-size:small">Green: all pass. Red: all fail. Amber: both. Grey: no result.</div>
+			<h3 style="text-align:center">Steps each part went through, and repeat photos</h3>
+			<div id="mixDiv" style="width:90vw;font-size:small"></div>
+				<h3>What we do not know</h3>
+		<ul style="max-width:90vw">
+			<li>The date of the run. The log holds no date.</li>
+			<li>The units of the step times.</li>
+			<li>What the tolerance in the area check measures.</li>
+			<li>Why the machine waited. The log does not give the cause.</li>
+		</ul>
+		<details style="max-width:90vw"><summary>Words used on this page</summary>
+			<ul>
+				<li>Part: one reference image the machine checks. The log names each part by its image file.</li>
+				<li>Score: how closely a part matches its reference, from 0 to 100. Higher is better.</li>
+				<li>Gold: the reference size of a good part.</li>
+				<li>Stop: a gap between two checks of the same part that is at least twice the usual gap.</li>
+				<li>Failed check: the machine could not find its mark, or could not trace the outline of the part.</li>
+				<li>Standard deviation (SD): how far results spread around their average.</li>
+				<li>Camera photo (SNAP), edge check (TRC), pattern check (MAT): the three steps the log names.</li>
+			</ul>
+		</details>
+<script type="text/javascript">
+		    // Upload without leaving the page, so the chart keeps its stream.
+		    document.getElementById('removeNames').addEventListener('click', function() {
+		        fetch('/mapping/remove', { method: 'POST' }).then(function() { document.getElementById('mappingStatus').textContent = 'Part names removed.'; });
+		    });
+		    document.getElementById('logForm').addEventListener('submit', function(event) {
+		        event.preventDefault();
+		        fetch("/", { method: "POST", body: new FormData(this) })
+		            .then(function(r) { console.log("upload answered " + r.status); })
+		            .catch(function(e) { console.error("upload failed", e); });
+		    });
 		    var data = [];
-			var g = new Dygraph(document.getElementById("graphdiv"), data, {
+		    // Shaded band: mean plus or minus 3 SD of the first 10 valid readings
+		    // of the run. The run is assumed to be in control at the start.
+		    function controlBand() {
+		        var xs = [];
+		        data.forEach(function(row) {
+		            for (var j = 1; j < row.length; j++) {
+		                if (row[j] != null) xs.push(row[j]);
+		            }
+		        });
+		        xs = xs.slice(0, 10);
+		        if (xs.length < 2) return null;
+		        var mean = xs.reduce(function(a, b) { return a + b; }, 0) / xs.length;
+		        var sd = Math.sqrt(xs.reduce(function(a, x) { return a + (x - mean) * (x - mean); }, 0) / xs.length);
+		        return [mean - 3 * sd, mean + 3 * sd];
+		    }
+			// Shaded band on every chart.
+			function drawBand(canvas, area, g) {
+				var band = controlBand();
+				if (!band) return;
+				var top = g.toDomYCoord(band[1]);
+				var bottom = g.toDomYCoord(band[0]);
+				canvas.fillStyle = "rgba(46, 125, 50, 0.10)";
+				canvas.fillRect(area.x, top, area.w, bottom - top);
+			}
+			// One chart per assembly site, with the site as its heading. The
+			// series names come from the labels event, for example "Lens Left".
+			var names = [];
+			var charts = [];
+			function siteOf(name) {
+				var m = name.match(/^(.*)\s+(Left|Right)$/);
+				return m ? m[1] : name;
+			}
+			function subset(rows, cols) {
+				return rows.map(function(row) {
+					return [row[0]].concat(cols.map(function(c) { return row[c]; }));
+				});
+			}
+			function rebuildCharts() {
+				var container = document.getElementById("chartsDiv");
+				container.innerHTML = "";
+				charts = [];
+				var order = [];
+				var bySite = {};
+				names.forEach(function(name, i) {
+					var s = siteOf(name);
+					if (!bySite[s]) { bySite[s] = []; order.push(s); }
+					bySite[s].push(i);
+				});
+				order.sort(function(a, b) { return (b === "VCSEL") - (a === "VCSEL"); });
+				order.forEach(function(site) {
+					var heading = document.createElement("h3");
+					heading.textContent = site === "VCSEL" ? "Vertical-Cavity Surface-Emitting LASER (VCSEL)" : site;
+					heading.style.textAlign = "center";
+					container.appendChild(heading);
+					var div = document.createElement("div");
+					div.style.width = "90vw";
+					div.style.height = "40vh";
+					container.appendChild(div);
+					var cols = bySite[site].map(function(i) { return i + 1; });
+					var labels = ["Time"].concat(bySite[site].map(function(i) { return names[i]; }));
+					var g = new Dygraph(div, subset(data, cols), {
 						drawPoints: true,
 						showRoller: true,
 						valueRange: [76, 96],
 						connectSeparatedPoints: true,
 						strokeWidth: 3,
 						legend: 'always',
-						labels: ["Time", "a", "b", "c", "d", "e", "f", "g", "h"],
-						labelsDiv: document.getElementById("labelsDiv")
+						labels: labels,
+						underlayCallback: shadeAll,
+							zoomCallback: onZoom
 					});
+					charts.push({ cols: cols, g: g });
+				});
+			}
+			function refreshCharts() {
+				charts.forEach(function(c) { c.g.updateOptions({ 'file': subset(data, c.cols), dateWindow: windowNow() }); });
+					if (failChart) failChart.updateOptions({ dateWindow: windowNow() });
+			}
 
-			var eventSource = new EventSource('http://localhost:3000/stream');
+			// Bar helpers for the summary charts. Each row is a bar on a fixed scale, so rows compare.
+var camCol = { '1': '#1e88e5', '2': '#fb8c00', '3': '#43a047' };
+var siteCol = { 'Lens': '#8e24aa', 'Local Align': '#00897b', 'Substrate Align': '#6d4c41', 'VCSEL': '#3949ab', 'unnamed': '#bdbdbd' };
+var failGroups = [];
+function pctOf(x, lo, hi) { return Math.max(0, Math.min(100, (x - lo) / (hi - lo) * 100)); }
+function clockMs(t) { var p = t.split(':').map(Number); return ((p[0] * 60 + p[1]) * 60 + p[2]) * 1000 + p[3]; }
+function cleanName(n) { return String(n || '').replace(/cogP\.VID$|\.VID$/, ''); }
+function rangeRow(label, lo, hi, mean, dom, color, note) {
+	var row = '<div class="crow"><div class="clabel" title="' + label + '">' + label + '</div><div class="ctrack">';
+	if (lo != null && hi != null) {
+		var a = pctOf(lo, dom[0], dom[1]), b = pctOf(hi, dom[0], dom[1]);
+		row += '<div class="cbar" style="left:' + a + '%;width:' + Math.max(b - a, 0.6) + '%;background:' + color + '"></div>';
+	}
+	if (mean != null) row += '<div class="ctick" style="left:' + pctOf(mean, dom[0], dom[1]) + '%"></div>';
+	return row + '</div><div class="cnote">' + note + '</div></div>';
+}
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function fracRow(label, frac, color, note) {
+	var w = frac == null ? 0 : Math.max(0, Math.min(1, frac)) * 100;
+	return '<div class="crow"><div class="clabel" title="' + esc(label) + '">' + esc(label) + '</div><div class="ctrack"><div class="cbar" style="left:0;width:' + w + '%;background:' + color + '"></div></div><div class="cnote">' + note + '</div></div>';
+}
+function axisRow(dom, unit) {
+	return '<div class="crow"><div class="clabel"></div><div class="ctrack ctrack-axis"><span style="left:0">' + dom[0] + '</span><span style="left:50%">' + ((dom[0] + dom[1]) / 2) + '</span><span style="left:100%">' + dom[1] + ' ' + unit + '</span></div><div class="cnote"></div></div>';
+}
+function stackRow(label, parts, note) {
+	var bar = '';
+	parts.forEach(function(p) { if (p.frac > 0) bar += '<span class="seg" style="width:' + (p.frac * 100).toFixed(1) + '%;background:' + p.color + '" title="' + p.name + '"></span>'; });
+	return '<div class="crow"><div class="clabel" title="' + label + '">' + label + '</div><div class="ctrack ctrack-stack">' + bar + '</div><div class="cnote">' + note + '</div></div>';
+}
+function timeRow(label, segs, t0, t1, note) {
+	var span = Math.max(t1 - t0, 1);
+	var bar = '';
+	segs.forEach(function(s) {
+		var a = (s.a - t0) / span * 100, b = (s.b - t0) / span * 100;
+		bar += '<div class="cbar" title="' + s.title + '" style="left:' + a + '%;width:' + Math.max(b - a, 0.4) + '%;background:' + s.color + '"></div>';
+	});
+	return '<div class="crow"><div class="clabel" title="' + label + '">' + label + '</div><div class="ctrack">' + bar + '</div><div class="cnote">' + note + '</div></div>';
+}
+function renderFailStrip() {
+	var el = document.getElementById('failStripDiv');
+	if (!failGroups.length) { el.innerHTML = ''; return; }
+	var t0 = Math.min.apply(null, failGroups.map(function(g) { return clockMs(g.first); }));
+	var t1 = Math.max.apply(null, failGroups.map(function(g) { return clockMs(g.last); }));
+	var html = '<h3 style="text-align:center">Failed checks per camera, from the first to the last failure</h3>';
+	failGroups.forEach(function(g) {
+		html += timeRow('Camera ' + g.camera + ' ' + cleanName(g.image), [{ a: clockMs(g.first), b: clockMs(g.last), color: camCol[g.camera] || '#888', title: g.failed + ' failed' }], t0, t1, g.failed + ' failed, ' + g.first.slice(0, 8) + ' to ' + g.last.slice(0, 8));
+	});
+	el.innerHTML = html;
+}
+
+// Sankey diagram as SVG. Columns: image sets, checks, outcomes. Band width is the value.
+function sankeySvg(flow) {
+	var W = 1000, colX = [170, 520, 860], gap = 6, pad = 30;
+	var colNodes = [[], [], []];
+	flow.nodes.forEach(function(n) { colNodes[n.col].push(n); });
+	var value = {};
+	flow.nodes.forEach(function(n) { value[n.id] = 0; });
+	flow.links.forEach(function(l) { value[l.source] = (value[l.source] || 0) + l.value; value[l.target] = (value[l.target] || 0) + l.value; });
+	// Node value is the larger of its in and out flows, so a column adds up.
+	var inVal = {}, outVal = {};
+	flow.links.forEach(function(l) { outVal[l.source] = (outVal[l.source] || 0) + l.value; inVal[l.target] = (inVal[l.target] || 0) + l.value; });
+	flow.nodes.forEach(function(n) { value[n.id] = Math.max(inVal[n.id] || 0, outVal[n.id] || 0); });
+	var colTotal = colNodes.map(function(col) { return col.reduce(function(a, n) { return a + value[n.id]; }, 0); });
+	var maxTotal = Math.max.apply(null, colTotal);
+	var scale = (560 - gap * 6) / Math.max(maxTotal, 1);
+	var H = 620;
+	var pos = {};
+	colNodes.forEach(function(col, c) {
+		var y = pad;
+		col.forEach(function(n) {
+			var h = Math.max(value[n.id] * scale, 3);
+			pos[n.id] = { x: colX[c], y: y, h: h, outOff: 0, inOff: 0 };
+			y += h + gap;
+		});
+	});
+	var color = function(id) {
+		if (id.indexOf('set:') === 0) return '#90a4ae';
+		return { 'check:score': '#66bb6a', 'check:area': '#ffb74d', 'out:pass': '#43a047', 'out:fail': '#e53935', 'out:silent': '#bdbdbd' }[id] || '#888';
+	};
+	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:' + W + 'px">';
+	flow.links.forEach(function(l) {
+		var a = pos[l.source], b = pos[l.target];
+		if (!a || !b) return;
+		var w = Math.max(l.value * scale, 1);
+		var y1 = a.y + a.outOff + w / 2, y2 = b.y + b.inOff + w / 2;
+		a.outOff += w; b.inOff += w;
+		var x1 = a.x + 10, x2 = b.x - 10, xm = (x1 + x2) / 2;
+		svg += '<path d="M' + x1 + ',' + y1 + ' C' + xm + ',' + y1 + ' ' + xm + ',' + y2 + ' ' + x2 + ',' + y2 + '" fill="none" stroke="' + color(l.target) + '" stroke-opacity="0.35" stroke-width="' + w + '"><title>' + l.value + '</title></path>';
+	});
+	flow.nodes.forEach(function(n) {
+		var p = pos[n.id];
+		svg += '<rect x="' + p.x + '" y="' + p.y + '" width="10" height="' + p.h + '" fill="' + color(n.id) + '"></rect>';
+		var anchor = n.col === 0 ? 'end' : (n.col === 1 ? 'middle' : 'start');
+		var tx = n.col === 0 ? p.x - 6 : (n.col === 1 ? p.x + 5 : p.x + 16);
+		var ty = p.y + Math.min(p.h, 14) - 2;
+		if (n.col === 1) { tx = p.x + 5; ty = p.y - 4; anchor = 'start'; }
+		svg += '<text x="' + tx + '" y="' + ty + '" font-size="12" text-anchor="' + anchor + '" fill="#222">' + n.label + ' (' + value[n.id] + ')</text>';
+	});
+	return svg + '</svg>';
+}
+
+var mappingBlocked = false;
+var mappingNote = '';
+var eventSource = new EventSource('/stream');
 
 			eventSource.addEventListener('labels', function(event) {
-				var labelStrings = "Time," + event.data;
-				var labels = labelStrings.split(',');
-				console.log('Browser received labels signal: ' + labels);
-				g.updateOptions( { 'labels': labels } );
+				if (mappingBlocked) return;
+					var newNames = event.data.split(',');
+				console.log('Browser received labels signal: ' + newNames);
+				if (newNames.join('|') !== names.join('|')) {
+					names = newNames;
+					rebuildCharts();
+					refreshCharts();
+				}
 			}, false);
 
 			eventSource.addEventListener('message', function(event) {
@@ -46,7 +299,296 @@
 				sparseArray[serieIndex] =  serieScore;
 				console.log(sparseArray);
 				data.push(sparseArray);
-				g.updateOptions( { 'file': data } );
+				refreshCharts();
+				if (failChart) failChart.updateOptions({ file: failureUpTo(serieTime.getTime()), dateWindow: windowNow() });
+			}, false);
+			// Shared x axis. The site charts and the failure chart use the same time scale,
+// so one zoom or pan applies to all of them. zoomWindow is null until someone zooms.
+var zoomWindow = null;
+var zooming = false;
+var failChart = null;
+var devChart = null;
+// Inferred states, drawn on every chart on the same time scale.
+// stops: the machine was not measuring (red). runs: an image set kept failing (amber).
+var inferred = { stops: [], runs: [] };
+function shadeEvents(canvas, area, g) {
+	inferred.stops.forEach(function(s) {
+		var x1 = g.toDomXCoord(s[0]), x2 = g.toDomXCoord(s[1]);
+		canvas.fillStyle = "rgba(198, 40, 40, 0.12)";
+		canvas.fillRect(x1, area.y, x2 - x1, area.h);
+	});
+	inferred.runs.forEach(function(r) {
+		var x1 = g.toDomXCoord(r[0]), x2 = g.toDomXCoord(r[1]);
+		canvas.fillStyle = "rgba(255, 160, 0, 0.18)";
+		canvas.fillRect(x1, area.y, Math.max(x2 - x1, 2), area.h);
+	});
+}
+function shadeAll(canvas, area, g) {
+	drawBand(canvas, area, g);
+	shadeEvents(canvas, area, g);
+}
+var failRows = [];
+function allGraphs() {
+	var gs = charts.map(function(c) { return c.g; });
+	if (failChart) gs.push(failChart);
+	if (devChart) gs.push(devChart);
+	return gs;
+}
+function fullWindow() {
+	var lo = Infinity, hi = -Infinity;
+	function take(t) { if (t < lo) lo = t; if (t > hi) hi = t; }
+	data.forEach(function(row) { if (row[0]) take(+row[0]); });
+	failRows.forEach(function(row) { take(row[0]); });
+	return lo <= hi ? [lo, hi] : null;
+}
+// Failure points up to time t, so the failure chart grows with the same messages as the site charts.
+function failureUpTo(t) {
+	var rows = failRows.filter(function(r) { return r[0] <= t; }).map(function(r) { return [new Date(r[0]), r[1], r[2]]; });
+	return rows.length ? rows : [[new Date(failRows[0][0]), 0, 0]];
+}
+function windowNow() {
+	return zoomWindow || fullWindow();
+}
+function onZoom(min, max) {
+	if (zooming) return;
+	zooming = true;
+	zoomWindow = (min == null) ? null : [min, max];
+	allGraphs().forEach(function(g) { g.updateOptions({ dateWindow: windowNow() }); });
+	zooming = false;
+}
+eventSource.addEventListener('series', function(event) {
+	var d = JSON.parse(event.data);
+	failRows = d.rows;
+	renderFailStrip();
+	inferred = { stops: d.stops, runs: d.runs };
+	if (!d.rows.length) return;
+	var holder = document.getElementById('failChartDiv');
+	holder.innerHTML = "";
+	var rows = [[new Date(d.rows[0][0]), 0, 0]];
+	failChart = new Dygraph(holder, rows, {
+		labels: ['Time', 'Failed checks so far', 'Area passes so far'],
+		ylabel: 'Failed checks',
+		strokeWidth: 2,
+		legend: 'always',
+		dateWindow: windowNow(),
+		underlayCallback: shadeAll,
+		zoomCallback: onZoom
+	});
+	allGraphs().forEach(function(g) { g.updateOptions({ dateWindow: windowNow() }); });
+}, false);
+			eventSource.addEventListener('areas', function(event) {
+				var d = JSON.parse(event.data);
+				if (d.deviation.length) {
+					var drows = d.deviation.map(function(p) { return [new Date(p.ms), p.deviation]; });
+					devChart = new Dygraph(document.getElementById('devChartDiv'), drows, {
+						labels: ['Time', 'Area minus gold'],
+						ylabel: 'Area minus gold',
+						drawPoints: true,
+						strokeWidth: 1,
+						legend: 'always',
+						dateWindow: windowNow(),
+						underlayCallback: shadeAll,
+						zoomCallback: onZoom
+					});
+				}
+				var hm = d.heatmap;
+				if (!hm.rows.length) return;
+				var fmt = function(ms) { var x = new Date(ms); return ('0' + x.getHours()).slice(-2) + ':' + ('0' + x.getMinutes()).slice(-2); };
+				var html = '<table style="border-collapse:collapse"><tr><th style="text-align:left">Image set</th>';
+				hm.bins.forEach(function(b) { html += '<th style="font-weight:normal;padding:0 2px">' + fmt(b) + '</th>'; });
+				html += '</tr>';
+				hm.rows.forEach(function(row) {
+					html += '<tr><td style="white-space:nowrap;padding-right:6px">' + row.image + '</td>';
+					row.cells.forEach(function(c) {
+						var col = (c.pass + c.fail === 0) ? '#eeeeee' : (c.fail === 0 ? '#a5d6a7' : (c.pass === 0 ? '#ef9a9a' : '#ffe082'));
+						var label = c.pass + c.fail === 0 ? '' : (c.pass + '/' + c.fail);
+						html += '<td title="pass/fail" style="background:' + col + ';width:44px;height:18px;text-align:center;border:1px solid #fff">' + label + '</td>';
+					});
+					html += '</tr>';
+				});
+				html += '</table>';
+				document.getElementById('heatDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('stats', function(event) {
+				var rows = JSON.parse(event.data);
+				var html = '<h3>Parts: score range (bar) and average (tick)</h3>' + axisRow([70, 100], '');
+				rows.forEach(function(r) {
+					var n = r.count + r.failed;
+					var share = n ? r.failed / n : 0;
+					var color = r.count === 0 ? '#bdbdbd' : (share === 0 ? '#66bb6a' : (share < 0.5 ? '#ffb74d' : '#e57373'));
+					var note = r.count ? 'n ' + r.count + ', failed ' + r.failed + ', SD ' + r.sd.toFixed(2) : 'no valid readings, failed ' + r.failed;
+					html += rangeRow(cleanName(r.image), r.min, r.max, r.mean, [70, 100], color, note);
+				});
+				document.getElementById('statsDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('cameras', function(event) {
+				var rows = JSON.parse(event.data);
+				var html = '<h3>Cameras: score range (bar) and average (tick)</h3>' + axisRow([70, 100], '');
+				rows.forEach(function(r) {
+					var trend = r.trend == null ? '-' : (r.trend >= 0 ? '+' : '') + r.trend.toFixed(3);
+					html += rangeRow('Camera ' + r.camera, r.min, r.max, r.mean, [70, 100], camCol[r.camera] || '#888', 'valid ' + r.valid + ', failed ' + r.failed + ', trend ' + trend);
+				});
+				document.getElementById('camerasDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('failures', function(event) {
+				failGroups = JSON.parse(event.data);
+			}, false);
+			eventSource.addEventListener('control', function(event) {
+				var rows = JSON.parse(event.data);
+				var html = '<h3>Normal range per camera (bar) and average (tick), from the first 10 readings</h3>' + axisRow([60, 105], '');
+				rows.forEach(function(r) {
+					html += rangeRow('Camera ' + r.camera, r.lower, r.upper, r.centre, [60, 105], '#90a4ae', 'outside ' + r.outside + (r.first_outside ? ', first ' + r.first_outside : ''));
+				});
+				document.getElementById('controlDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('sites', function(event) {
+				var rows = JSON.parse(event.data);
+				if (mappingBlocked) { document.getElementById('sitesDiv').innerHTML = '<div>' + mappingNote + '</div>'; return; }
+				var html = '<h3>Assembly sites: score range (bar) and average (tick)</h3>' + axisRow([70, 100], '');
+				rows.forEach(function(r) {
+					var label = r.site + (r.side ? ' ' + r.side : '');
+					html += rangeRow(label, r.min, r.max, r.mean, [70, 100], siteCol[r.site] || '#888', 'valid ' + r.valid + ', failed ' + r.failed + ', trend ' + (r.trend == null ? '-' : r.trend.toFixed(3)));
+				});
+				document.getElementById('sitesDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('stops', function(event) {
+				var d = JSON.parse(event.data);
+				var html = '<h3>Stops: when each part waited</h3>';
+				if (!d.stops.length) { document.getElementById('stopsDiv').innerHTML = html + '<div>No stops. Usual cycle ' + (isNaN(d.cycle) ? '-' : Math.round(d.cycle)) + ' seconds.</div>'; return; }
+				var t0 = Math.min.apply(null, d.stops.map(function(s) { return clockMs(s.from); }));
+				var t1 = Math.max.apply(null, d.stops.map(function(s) { return clockMs(s.to); }));
+				var byImage = {};
+				d.stops.forEach(function(s) { (byImage[cleanName(s.image)] = byImage[cleanName(s.image)] || []).push(s); });
+				html += '<div>Usual cycle ' + Math.round(d.cycle) + ' seconds. A stop is a gap of ' + Math.round(d.threshold) + ' seconds or more.</div>';
+				Object.keys(byImage).sort().forEach(function(k) {
+					var segs = byImage[k].map(function(s) { return { a: clockMs(s.from), b: clockMs(s.to), color: '#e53935', title: s.from + ' to ' + s.to + ', ' + Math.round(s.seconds) + ' s' }; });
+					var total = byImage[k].reduce(function(a, s) { return a + s.seconds; }, 0);
+					html += timeRow(k, segs, t0, t1, byImage[k].length + ' stops, ' + Math.round(total) + ' s');
+				});
+				document.getElementById('stopsDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('report', function(event) {
+				var d = JSON.parse(event.data);
+				var silentBy = {};
+				d.silent.sets.forEach(function(x) { silentBy[x.image] = x.silent; });
+				var html = '<h3>Passes and fails per part</h3>';
+				html += '<div>Overall yield ' + (d.yield.overall * 100).toFixed(0) + '% (' + d.yield.passes + ' passes of ' + d.yield.results + ' results). Measuring time ' + (d.utilisation.utilisation * 100).toFixed(0) + '%: ' + Math.round(d.utilisation.stopSeconds) + ' of ' + Math.round(d.utilisation.spanSeconds) + ' seconds inside stops.</div>';
+				html += '<div>Silent steps against the healthy-set baseline: ' + (d.silent.baseline == null ? '-' : d.silent.baseline) + ' results per image set, total shortfall ' + d.silent.total + '. A shortfall is a gap against the baseline, not proof of a skipped step.</div>' + axisRow([0, 1], '');
+				d.yield.sets.forEach(function(s) {
+					if (s.image === '(no image)') return;
+					var color = s.yield >= 0.9 ? '#66bb6a' : (s.yield >= 0.5 ? '#ffb74d' : '#e57373');
+					var sil = silentBy[s.image] || 0;
+					html += fracRow(cleanName(s.image), s.yield, color, s.passes + ' of ' + s.results + ' pass' + (sil ? ', silent ' + sil : ''));
+				});
+				document.getElementById('reportDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('mix', function(event) {
+				var d = JSON.parse(event.data);
+				var col = { SNAP: '#90a4ae', TRC: '#ffb74d', MAT: '#81c784' };
+				var html = '<h3>How long each camera step takes (units as logged, not stated)</h3>';
+				html += '<div>If one step ran twice as fast, the total would fall by the saving shown.</div>';
+				['SNAP', 'TRC', 'MAT'].forEach(function(p) {
+					var x = d.phases[p];
+					html += fracRow({ SNAP: 'camera photo (SNAP)', TRC: 'edge check (TRC)', MAT: 'pattern check (MAT)' }[p], x.share, col[p], x.count + ' periods, mean ' + (x.mean == null ? '-' : x.mean.toFixed(1)) + ', halving saves ' + (x.halvedSaving * 100).toFixed(0) + '%');
+				});
+				html += '<h3>Steps each part went through, and repeat photos</h3>';
+				html += '<div>Bar: share of each step. Grey: camera photo. Orange: edge check. Green: pattern check. Repeat photos: photos per result, normal is 1. Baseline ' + (d.baseline == null ? '-' : d.baseline.toFixed(2)) + ', rows above 1.5 times the baseline are red. Reuse counts the lines "Last file is same as current file".</div>';
+				d.sets.forEach(function(s) {
+					var n = s.SNAP + s.TRC + s.MAT;
+					var parts = [{ name: 'SNAP', frac: n ? s.SNAP / n : 0, color: col.SNAP }, { name: 'TRC', frac: n ? s.TRC / n : 0, color: col.TRC }, { name: 'MAT', frac: n ? s.MAT / n : 0, color: col.MAT }];
+					var note = 'attempts ' + (s.attempts == null ? '-' : s.attempts.toFixed(2)) + (s.over ? ' (above)' : '') + ', reuse ' + s.reuse;
+					html += stackRow(cleanName(s.image), parts, note);
+				});
+				document.getElementById('mixDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('flow', function(event) {
+				var d = JSON.parse(event.data);
+				var html = '<h3>How the log was read: share of all lines kept at each step</h3>';
+				d.funnel.forEach(function(st, i) {
+					html += fracRow(st.label, st.share, i === 0 ? '#cfd8dc' : '#78909c', st.count.toLocaleString('en-GB') + ' (' + (st.share * 100).toFixed(1) + '%)');
+				});
+				html += '<h3>From part to check to result</h3>';
+				html += '<div>Band width is the number of results. Score readings use the pattern check, area checks use the edge check. Silent shortfall is the gap against the usual number of results per part.</div>';
+				html += sankeySvg(d.flow);
+				document.getElementById('flowDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('summary', function(event) {
+				var lines = JSON.parse(event.data);
+				document.getElementById('summaryDiv').innerHTML = lines.map(function(l) { return '<li>' + l + '</li>'; }).join('');
+			}, false);
+			eventSource.addEventListener('checks', function(event) {
+				var d = JSON.parse(event.data);
+				mappingBlocked = !d.mapping.ok;
+				mappingNote = 'Site charts and the site table are not drawn. The part names in filename-mappings.csv do not match this log: ' + d.mapping.detail + '. Drawing them would put wrong names on the charts.';
+				var yes = function(ok) { return ok ? 'OK' : 'Missing'; };
+				var html = '<h3>Is this log complete enough to trust the charts?</h3><ul>';
+				d.gates.forEach(function(g) {
+					html += '<li><b>' + g.name + ':</b> ' + yes(g.ok) + ', ' + g.detail + (g.ok ? '' : '. Next step: ' + g.next) + '</li>';
+				});
+				html += '</ul>';
+				html += '<div><b>Part names:</b> ' + (d.mapping.ok ? 'trusted, the names match this log.' : 'not trusted. ' + mappingNote) + '</div>';
+				var grid = function(t, label) {
+					return '<div style="display:inline-block;margin:6px 24px 6px 0;vertical-align:top"><div><b>' + label + '</b></div>' +
+						'<table style="border-collapse:collapse;text-align:center"><tr><th></th><th style="padding:4px 10px">Machine says pass</th><th style="padding:4px 10px">Machine says fail</th></tr>' +
+						'<tr><th style="padding:4px 10px">Rule says pass</th><td style="background:#c8e6c9;padding:8px 14px">' + t.passPass + '</td><td style="background:#ffe0b2;padding:8px 14px">' + t.passFail + '</td></tr>' +
+						'<tr><th style="padding:4px 10px">Rule says fail</th><td style="background:#ffe0b2;padding:8px 14px">' + t.failPass + '</td><td style="background:#c8e6c9;padding:8px 14px">' + t.failFail + '</td></tr></table>' +
+						'<div>Agreement: ' + (t.agree == null ? '-' : (t.agree * 100).toFixed(0) + '%') + ' of ' + t.total + ' checks. Green cells agree.</div></div>';
+				};
+				html += '<h3>Do the machine\'s own pass marks agree with other rules?</h3>';
+				html += grid(d.verdicts.machine, 'Machine pass mark against the machine verdict on the boundary line');
+				html += grid(d.verdicts.tolerance, 'Machine pass mark against our reading of the tolerance');
+				html += '<div>Low agreement means the rule is not the one the machine uses, or the tolerance means something else. The page does not decide which.</div>';
+				document.getElementById('checksDiv').innerHTML = html;
+				if (mappingBlocked) document.getElementById('chartsDiv').innerHTML = '<div style="padding:12px;background:#fff3e0">' + mappingNote + '</div>';
+			}, false);
+			eventSource.addEventListener('fingerprint', function(event) {
+				var f = JSON.parse(event.data);
+				document.getElementById('fingerprintDiv').innerHTML = '<div style="font-size:12px;color:#444;border-top:1px solid #ddd;padding-top:4px">Run record: ' + f.lines + ' lines, ' + f.bytes + ' bytes, file code ' + f.sha256.slice(0, 16) + ', page code ' + f.code + ', processed ' + f.processedAt.slice(0, 19).replace('T', ' ') + ' (server time).</div>';
+			}, false);
+			eventSource.addEventListener('trace', function(event) {
+				var d = JSON.parse(event.data);
+				var col = { 'Scored readings': '#43a047', 'Area passes': '#66bb6a', 'Boundary failures': '#e53935', 'Other lines (ignored)': '#bdbdbd' };
+				var html = '<h3>How each line of the log was read</h3>';
+				html += '<div>Bars show the share of all ' + d.routes.total.toLocaleString('en-GB') + ' lines. Green lines feed the charts. Grey lines are not used.</div>';
+				d.routes.routes.forEach(function(r) {
+					html += fracRow(r.label, r.count / d.routes.total, col[r.label] || '#888', r.count.toLocaleString('en-GB') + ' lines');
+				});
+				html += '<h3>Kinds of lines in the log</h3>';
+				d.kinds.kinds.forEach(function(k) {
+					var used = k.used !== 'not used';
+					html += fracRow(k.name, k.count / d.kinds.total, used ? '#66bb6a' : '#bdbdbd', k.count.toLocaleString('en-GB') + ' lines, ' + (used ? 'used for ' + k.used : 'not used'));
+				});
+				document.getElementById('traceDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('scenarios', function(event) {
+				var rows = JSON.parse(event.data);
+				var html = '<h3>What still works for other kinds of input</h3>';
+				html += '<div>The same parser runs on changed copies of this log. Green cells work. Red cells do not.</div>';
+				html += '<table style="border-collapse:collapse;font-size:13px"><tr><th style="text-align:left;padding:4px 8px">Input</th>';
+				rows[0].cells.forEach(function(c, i) { html += '<th style="padding:4px 8px;font-weight:normal">' + ['Results', 'Pass rate', 'Stops', 'Part names', 'Pass marks', 'Calibration'][i] + '</th>'; });
+				html += '</tr>';
+				rows.forEach(function(r) {
+					html += '<tr><td style="padding:4px 8px;white-space:nowrap">' + r.name + '</td>';
+					r.cells.forEach(function(c) {
+						html += '<td style="padding:4px 8px;text-align:center;background:' + (c.ok ? '#c8e6c9' : '#ffcdd2') + '">' + c.label + '</td>';
+					});
+					html += '</tr>';
+				});
+				html += '</table>';
+				document.getElementById('scenariosDiv').innerHTML = html;
+			}, false);
+			eventSource.addEventListener('bins', function(event) {
+				var d = JSON.parse(event.data);
+				var html = '<h3>Why checks failed: failure bins, largest first (Pareto)</h3>';
+				html += '<div>Each failed check sorts into one bin, the kind of failure. The bars are in order of size. The running total shows how much of all ' + d.total + ' failures the top bins explain.</div>';
+				d.bins.forEach(function(b) {
+					html += fracRow(b.label, b.share, b.bin === 'boundary' ? '#e53935' : '#ffb74d',
+						b.count + ' of ' + d.total + ' (' + (b.share * 100).toFixed(0) + '%), running total ' + (b.cumulative * 100).toFixed(0) + '%, ' + b.parts + ' part' + (b.parts === 1 ? '' : 's') + ', most in ' + b.topPart.replace(/cogP\.VID$|\.VID$/, ''));
+				});
+				d.bins.forEach(function(b) {
+					html += '<div style="font-size:12px;color:#444">' + b.label + ' means ' + b.meaning + '.</div>';
+				});
+				document.getElementById('binsDiv').innerHTML = html;
 			}, false);
 			// Explicit close
 			eventSource.addEventListener('close', function(event) {

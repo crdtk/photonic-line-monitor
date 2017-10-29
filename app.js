@@ -29,15 +29,22 @@ app.set('view engine', 'hjs');
 var uploads = path.join(__dirname, 'uploads'); 
 app.set('uploads', uploads);
 
-// Entry point
+// Part names come from a mapping file uploaded on the page. Until one is uploaded,
+// the server has no part names. The file is kept in uploads/, which git ignores.
 var ImageMeasurementsFileParser = require(path.join(__dirname, 'libs', 'ImageMeasurementsFileParser.js'));
-var parser = new ImageMeasurementsFileParser();
-parser.process(path.join(__dirname, './main/resources/filename-mappings.csv'));
-
-parser.on('end', function(map) {
-    console.log('Data mapping image files with the associated camera measurements has been successfully parsed:');
-    app.set('mappings', map);
-    console.log(map);
+var fs = require('fs');
+app.set('mappingPath', path.join(uploads, 'filename-mappings.csv'));
+app.set('mappings', {});
+app.set('loadMappings', function(file, done) {
+    var parser = new ImageMeasurementsFileParser();
+    parser.process(file);
+    parser.on('end', function(map) {
+        app.set('mappings', map);
+        if (done) done();
+    });
 });
+if (fs.existsSync(app.get('mappingPath'))) {
+    app.get('loadMappings')(app.get('mappingPath'));
+}
 
 module.exports = app;

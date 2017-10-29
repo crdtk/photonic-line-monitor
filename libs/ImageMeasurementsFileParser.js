@@ -13,6 +13,7 @@ function ImageMeasurementsFileParser() {
 		var self = this;
 		
 		reader.addListener('data', function(data) {
+			if (data[2] === 'filename') return; // the header row
 			var imageName = data[2];
 			var label = data[4];
 			if (!map.hasOwnProperty(imageName) && label) {
