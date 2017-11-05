@@ -26,5 +26,5 @@ clean:
 # Writes a synthetic log and a matching part names file to demo/. It holds no machine data.
 .PHONY: demo
 demo:
-	mkdir -p demo
-	node -e "require('./libs/DemoLog.js').write('demo')"
+	@mkdir -p demo
+	@node -e "require('./libs/DemoLog.js').write('demo')" && echo "Wrote demo/demo.LOG and demo/demo-part-names.csv. Run make run, then upload both files."

@@ -1,10 +1,50 @@
-# Industrial precision visualizer
+<a href="https://commons.wikimedia.org/wiki/File:Genesis_laser_harp_beam_output.jpg">
+    <img src="docs/images/genesis-laser-harp-beam.jpg" alt="By Franck Morisseau (Own work) [CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)], via Wikimedia Commons"  align="right" width="60%" style="border:50px solid transparent"/>
+</a>
 
-A web page that reads one log file from an assembly machine and shows what happened, part by part and over time.
+# Photonic Line Monitor
 
-The machine attaches a lens to an optical engine (a small circuit board with a laser). It scores each part against its reference image, from 0 to 100. Higher is better. The page shows whether the parts passed, where the machine waited, and where the failures were.
+Photonic Line Monitor reads the process log of an optical assembly station and shows what failed, where it waited, and whether its pass marks agree with another rule. On the synthetic demo run (`make demo`) it reports 192 results, 170 passing (89%), and 22 failed checks, 15 of them boundary failures on one part.
 
-The charts use one shared time line, so a failure, a stop and a score can be read at the same moment.
+Photonic devices are built by aligning lenses, fibres and lasers to a few micrometres, one part at a time. The station that does this writes a log line for every check. This tool turns that log into the views a production engineer needs to release a lot, find a failure mode, or spot a drifting station before it causes scrap.
+
+It works on log files, not on optical measurements, so it does not judge device performance. It judges the process that built the device.
+
+## What it shows
+
+- **Log parsing:** reads a line-oriented machine log with several kinds of line, and keeps the lines it cannot use apart from the results.
+- **Statistics and control limits:** mean, spread, trend and a normal range per camera and per site, taken from the first readings.
+- **Streamed charts:** server-sent events push each result to the page as it is read, so the charts fill in while the file is processed.
+- **A Node.js server with uploads:** one upload carries the log and an optional part names file. The server refuses to name parts it cannot verify.
+- **Data validation:** a log check lists what is missing, and a mapping check compares the part names with the log before drawing the site charts.
+- **Reproducible builds:** a Makefile installs a pinned Node version, picks a free port, and removes files only with an explicit confirmation.
+
+## Hard problems and how they were solved
+
+- **Failures counted twice.** Boundary failures appeared once as readings and once as area checks, so the totals were overstated. Each result line is now counted once, from its own source.
+- **Pass marks that disagree.** The station's own verdict and a tolerance rule do not always agree. The page shows both as grids and does not decide which one is right.
+- **Part names that do not match the log.** A mapping file from another run gave names that did not fit. The server now refuses to draw the site charts with names it cannot verify, and says why.
+- **A dependency that broke on the target runtime.** The static file server failed on a newer Node version. The versions were pinned and the install was moved into the Makefile.
+
+## Tests and demo
+
+This repository holds no automated test suite at present. The checks run on the demo data, and the page reports them in the log check and the variants table.
+
+To run the demo and see the checks:
+
+```bash
+make demo
+make run
+```
+
+The variants table runs the parser on six changed copies of the log and shows which panels still work for each.
+
+## Where it fits
+
+- Monitoring lens, fibre and laser alignment on an assembly line.
+- Packaging yield review before a lot is released.
+- Finding a station that drifts or waits, before it creates scrap.
+- Reviewing test and process data with the people who own the station.
 
 ## Run
 
@@ -12,126 +52,86 @@ The charts use one shared time line, so a failure, a stop and a score can be rea
 make run
 ```
 
-`make run` installs Node.js 8 into `.node/` if it is missing, installs the packages, and starts the server. It picks the first free port from 8000 and opens the page in a browser.
+`make run` installs Node.js 8 into `.node/` if it is missing, installs the packages, and starts the server on the first free port from 8000. Use `make run PORT=8080` to choose a port.
 
-To choose a port:
-
-```bash
-make run PORT=8080
-```
-
-To remove the packages, run `make clean`. It prints what it would remove and removes nothing until you add `CONFIRM=YES`.
-
-To make a synthetic log for demonstrations, run `make demo`. It writes `demo/demo.LOG` and a matching part names file. The demo holds no machine data.
+To remove the packages, run `make clean CONFIRM=YES`. Without `CONFIRM=YES` it only prints what it would remove.
 
 ## Use
 
-1. Choose the log file and, optionally, the part names file.
+1. Choose the station's log file and, optionally, a part names file.
 2. Click Upload. One upload sends both files.
 3. Read the dashboard from the top down.
 
-The part names file says which image file is which part, for example `Lens Left`. Without it, the charts are not named and the site charts are not drawn. The page says so. To remove the part names, click Remove part names.
-
-The machine log is private and is not in this repository.
+Without a part names file, the charts show raw image names and the site charts are not drawn. The page says so.
 
 ## The dashboard
 
-The screenshots use the synthetic demo log. It has boundary failures, no-mark failures, stops, area checks, repeat photos and a drifting part, so the charts show the kinds of events a real run produces.
+The screenshots use the synthetic demo log. It has boundary failures, no-mark failures, stops, area checks, repeat photos and a drifting part.
 
-### 1. The short version
+### Summary and log check
 
-Four lines sum up the run: how many results there were and how many passed, how many checks failed and where, how much of the run had no results, and the longest wait for one part.
+The first lines give the number of results, the number that passed, the failures and where they came from, the share of the run with no results, and the longest wait for one part.
 
-Below them, the run record shows the number of lines read and a short code for the file, so anyone can check which file produced the page.
+![Summary and log check](docs/screenshots/demo-01-summary.jpg)
 
-The log check says whether the file has what the charts need: result lines, the calibration line, part names, dates and units. A missing item says what to ask for.
+### Pass marks and line trace
 
-![The short version and the log check](docs/screenshots/demo-01-summary.jpg)
+Two grids compare the station's pass marks with two rules. Green cells agree. A second panel shows how each line of the log was read and which kinds of line the charts use.
 
-### 2. Do the pass marks agree with other rules?
+![Pass marks, line trace and input variants](docs/screenshots/demo-02-checks-and-variants.jpg)
 
-Two grids compare the machine's own pass mark with two rules of ours. The first uses the machine's verdict on the boundary line. The second uses our reading of the tolerance around the gold area. Green cells agree.
+### Failures over time and area checks
 
-The page does not decide which rule is right. It shows where they differ, so an engineer can ask what the tolerance really measures.
+Passed and failed checks are counted over time, with stops and repeated failures shaded. The failure bins sort the failures by kind. Area checks are plotted against the reference area, so a rejected check shows as a dip.
 
-### 3. How each line was read
+![Failures over time and area checks](docs/screenshots/demo-03-failures-and-area.jpg)
 
-Bars show how many lines became scored readings, area passes and boundary failures, and how many were ignored. The list of line kinds shows each kind of line in the log and whether the page uses it.
+### Scores by assembly site
 
-The variants table runs the same parser on changed copies of the log. Green cells still work. Red cells do not, for example when there is no calibration line.
+Each chart is one assembly site, with one line per side. The shaded band is the normal range, taken from the first readings.
 
-![Pass mark grids, line counts and input variants](docs/screenshots/demo-02-checks-and-variants.jpg)
+![Scores by assembly site](docs/screenshots/demo-04-site-charts.jpg)
 
-### 4. Failed and passed checks over time
+### Where the log goes
 
-The blue line counts passed area checks. The green line counts failed checks. Red bands are stops, where the machine waited with no results. Amber bands are one part failing again and again.
-
-Below the chart, the failure bins sort every failure by kind. The bars run from the largest to the smallest kind, and the running total shows how much of all failures the top kinds explain. The failed checks per camera show when each camera's failures began and ended.
-
-![Failures over time, failure kinds and failures per camera](docs/screenshots/demo-03-failures-and-area.jpg)
-
-### 5. Area checks against the reference
-
-Each dot is one area check. Zero means the part matches the reference area exactly. The dips far below zero are checks the machine rejected.
-
-The same shaded bands as the failure chart show the stops and the repeated failures, so the two charts line up.
-
-### 6. Scores by assembly site and side
-
-Each chart is one assembly site, and each line is one side. The grey band is the normal range, taken from the first readings. A point outside the band is unusual.
-
-The chart title names the site. Part names come from the part names file, so the site charts show only when that file matches the log.
-
-![Scores for one assembly site, with the normal range shaded](docs/screenshots/demo-04-site-charts.jpg)
-
-### 7. Where the log goes
-
-The bars show how much of the log each step kept, from every line down to the area passes. The flow diagram follows each part through its checks to a pass, a fail or a silent shortfall. Wider bands mean more results.
-
-A silent shortfall is a part with fewer results than the usual number. It is a gap to check, not proof that a step was skipped.
+The flow follows each part through its checks to a pass, a fail or a shortfall against the usual number of results.
 
 ![Flow from part to check to result](docs/screenshots/demo-05-flow.jpg)
 
-### 8. Parts, cameras and sites
+### Parts, cameras, sites and stops
 
-Each bar is the score range of one part, camera or site, and the tick marks its average. The number on the right gives the valid readings, the failed readings and the spread.
+Score ranges per part, camera and site, with the average marked. Stops appear as red bars on the same time line.
 
-The normal range per camera uses the first 10 readings, so a camera with a wide range shows a wide band.
+![Score ranges and stops](docs/screenshots/demo-06-parts-cameras-stops.jpg)
 
-The stops list shows, for each part, each gap between two checks that was at least twice the usual gap. The stops are the red bars on the same time line.
+### Yield, heatmap and steps
 
-![Score ranges per part, camera and site, and the stops](docs/screenshots/demo-06-parts-cameras-stops.jpg)
+Passes and fails per part, a heatmap of results in five-minute slots, and the steps each part went through, with repeat photos.
 
-### 9. Passes and fails per part, and the time they happened
+![Heatmap and steps](docs/screenshots/demo-07-heatmap-and-mix.jpg)
 
-The bars show the passes out of the results for each part. The overall yield and the time the machine spent inside stops sit above them.
+## Limits
 
-The heatmap shows one part in one five-minute slot. Green cells pass, red cells fail, and amber cells have both.
-
-### 10. The steps each part went through
-
-The bars show the share of camera photos, edge checks and pattern checks for each part. Grey is the camera photo, orange the edge check, and green the pattern check. The attempts column gives the repeat photos per result. A normal part takes one photo per result, and a part above 1.5 times the normal rate is marked red.
-
-Reuse counts the times the machine read the same file again without loading it.
-
-![Heatmap of results over time, and the steps each part went through](docs/screenshots/demo-07-heatmap-and-mix.jpg)
-
-### 11. What we do not know
-
-The page ends with what the log does not say: the date of the run, the units of the step times, what the tolerance measures, and why the machine waited. A word list at the bottom explains the terms used on the page.
+- The tool reads one log format from one kind of station. Another station needs its own log reader.
+- The log has no date and no units for its step times. The page says so and does not guess them.
+- The tolerance rule is ours, not the station's. The page shows where it disagrees with the station and leaves the decision to the engineer.
 
 ## Units
 
-The log gives a camera magnification of 0.0047 on both axes, and ring diameters of 0.0700 and 0.1000. It does not state a unit. Treat any size read from these values as an assumption until the equipment documentation confirms the unit.
+The sample log gives a camera magnification of 0.0047 on both axes, and ring diameters of 0.0700 and 0.1000. It does not state a unit. Treat any size read from these values as an assumption until the equipment documentation confirms the unit.
+
+## Stack
+
+Node.js (version 8 in the Makefile), Express, Dygraphs for the charts, server-sent events for streaming, Python for the replay tool, and Make for the build.
 
 ## Contributing
 
-1. Fork it!
-2. Create your feature branch: `git checkout -b my-new-feature`
-3. Commit your changes: `git commit -am 'Add some feature'`
-4. Push to the branch: `git push origin my-new-feature`
-5. Submit a pull request :D
+1. Fork it.
+2. Create a feature branch: `git checkout -b my-new-feature`.
+3. Commit your changes: `git commit -am 'Add some feature'`.
+4. Push the branch: `git push origin my-new-feature`.
+5. Open a pull request.
 
 ## License
 
-This experiment is released under the [MIT License](http://www.opensource.org/licenses/MIT).
+This project is released under the [MIT License](http://www.opensource.org/licenses/MIT).
